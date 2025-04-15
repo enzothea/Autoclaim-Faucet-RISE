@@ -1,31 +1,36 @@
+import os
+from dotenv import load_dotenv
 from selenium import webdriver
-from selenium.webdriver.common.by import By
+from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.chrome.service import Service
-from selenium.webdriver.support.ui import Select
+import shutil
 import time
 import datetime
 
-# CONFIG
-WALLET_ADDRESS = '0xYourWalletAddressHere'
-CHROMEDRIVER_PATH = 'C:/path/to/chromedriver.exe'
-URL = 'https://faucet.testnet.riselabs.xyz/'
-TOKENS = ['ETH', 'USDC', 'WETH', 'DAI']  # Kamu bisa tambah token di sini
-MAX_DRIP_PER_TOKEN = 3
-CLAIM_INTERVAL = 3600  # 60 menit
+# Load konfigurasi dari .env
+load_dotenv()
 
-# Log drip per token (reset tiap hari)
-drip_log = {token: 0 for token in TOKENS}
+WALLET_ADDRESS = os.getenv('WALLET_ADDRESS')
+TOKENS = os.getenv('TOKENS').split(',')  # Mengambil daftar token dari .env
+MAX_DRIP_PER_TOKEN = int(os.getenv('MAX_DRIP_PER_TOKEN'))
+CLAIM_INTERVAL = int(os.getenv('CLAIM_INTERVAL'))
 
+CHROMEDRIVER_PATH = shutil.which("chromedriver")  # Ambil path chromedriver otomatis
+
+options = Options()
+options.add_argument("--headless")
+options.add_argument("--disable-gpu")
+options.add_argument("--no-sandbox")
+options.binary_location = "/usr/bin/chromium-browser"  # Chromium di VPS
+
+driver = webdriver.Chrome(service=Service(CHROMEDRIVER_PATH), options=options)
+
+# Fungsi klaim token
 def claim_token(token):
-    print(f"[{datetime.datetime.now()}] 🚀 Klaim token {token} ke-{drip_log[token]+1}...")
-
-    options = webdriver.ChromeOptions()
-    options.add_argument("--headless")
-    options.add_argument("--disable-gpu")
-    driver = webdriver.Chrome(service=Service(CHROMEDRIVER_PATH), options=options)
+    print(f"[{datetime.datetime.now()}] 🚀 Klaim token {token}...")
 
     try:
-        driver.get(URL)
+        driver.get('https://faucet.testnet.riselabs.xyz/')
         time.sleep(2)
 
         # Pilih token
@@ -50,29 +55,30 @@ def claim_token(token):
             print(f"[{datetime.datetime.now()}] ⛔ Token {token} limit hari ini.")
             return False  # token limit
         else:
-            drip_log[token] += 1
             return True  # sukses klaim
 
     except Exception as e:
         print(f"[{datetime.datetime.now()}] ⚠️ Error saat klaim {token}: {e}")
-        return True  # anggap tetap coba token lain
+        return True  # tetap coba token lain
 
-    finally:
-        driver.quit()
+# Loop klaim otomatis
+def main():
+    drip_log = {token: 0 for token in TOKENS}
+    
+    while True:
+        if all(drip_log[token] >= MAX_DRIP_PER_TOKEN for token in TOKENS):
+            print(f"[{datetime.datetime.now()}] ✅ Semua token limit hari ini. Tunggu 24 jam...\n")
+            time.sleep(86400)  # Tunggu 1 hari (24 jam)
+            drip_log = {token: 0 for token in TOKENS}  # Reset log harian
+            continue
+        
+        for token in TOKENS:
+            if drip_log[token] < MAX_DRIP_PER_TOKEN:
+                if claim_token(token):
+                    drip_log[token] += 1
+                print(f"⏳ Menunggu {CLAIM_INTERVAL // 60} menit...\n")
+                time.sleep(CLAIM_INTERVAL)
 
-def all_token_limits_reached():
-    return all(drip_log[token] >= MAX_DRIP_PER_TOKEN for token in TOKENS)
+if __name__ == "__main__":
+    main()
 
-# 🌀 Looping otomatis harian
-while True:
-    if all_token_limits_reached():
-        print(f"[{datetime.datetime.now()}] ✅ Semua token limit hari ini. Tunggu 24 jam...\n")
-        time.sleep(86400)  # Tunggu 1 hari (24 jam)
-        drip_log = {token: 0 for token in TOKENS}  # Reset log harian
-        continue
-
-    for token in TOKENS:
-        if drip_log[token] < MAX_DRIP_PER_TOKEN:
-            claim_token(token)
-            print(f"⏳ Menunggu {CLAIM_INTERVAL // 60} menit...\n")
-            time.sleep(CLAIM_INTERVAL)
